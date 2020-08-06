@@ -107,11 +107,19 @@ defmodule Freddy.Connection do
   end
 
   @doc """
+  Retrieves the last connection error, will return the error tuple, otherwise nil if it's connected.
+  """
+  @spec get_last_error(connection, timeout) :: nil | {:error, term}
+  def get_last_error(connection, timeout \\ 5000) do
+    Connection.call(connection, :get_last_error, timeout)
+  end
+
+  @doc """
   Closes an AMQP connection. This will cause process to reconnect.
   """
   @spec close(connection, timeout) :: :ok | {:error, reason :: term}
   def close(connection, timeout \\ 5000) do
-    Connection.call(connection, {:close, timeout})
+    Connection.call(connection, {:close, timeout}, timeout + 100)
   end
 
   @doc """
@@ -150,12 +158,12 @@ defmodule Freddy.Connection do
 
   import Record
 
-  defrecordp :state,
-    adapter: nil,
-    hosts: nil,
-    connection: nil,
-    channels: MultikeyMap.new(),
-    backoff: Backoff.new([])
+  defrecordp :state, adapter: nil,
+                     hosts: nil,
+                     connection: nil,
+                     last_error: nil,
+                     channels: MultikeyMap.new(),
+                     backoff: Backoff.new([])
 
   @impl true
   def init(opts) do
@@ -192,11 +200,11 @@ defmodule Freddy.Connection do
       {:ok, connection} ->
         adapter.link_connection(connection)
         new_backoff = Backoff.succeed(backoff)
-        {:ok, state(state, connection: connection, backoff: new_backoff)}
+        {:ok, state(state, connection: connection, backoff: new_backoff, last_error: nil)}
 
-      _error ->
+      error ->
         {interval, new_backoff} = Backoff.fail(backoff)
-        {:backoff, interval, state(state, backoff: new_backoff)}
+        {:backoff, interval, state(state, backoff: new_backoff, last_error: error)}
     end
   end
 
@@ -220,6 +228,10 @@ defmodule Freddy.Connection do
   end
 
   @impl true
+  def handle_call(:get_last_error, _, state(last_error: err) = state) do
+    {:reply, err, state}
+  end
+
   def handle_call(_, _, state(connection: nil) = state) do
     {:reply, {:error, :closed}, state}
   end
