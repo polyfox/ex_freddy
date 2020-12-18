@@ -119,7 +119,7 @@ defmodule Freddy.Connection do
   """
   @spec close(connection, timeout) :: :ok | {:error, reason :: term}
   def close(connection, timeout \\ 5000) do
-    Connection.call(connection, {:close, timeout}, timeout + 100)
+    Connection.call(connection, {:close, timeout}, timeout)
   end
 
   @doc """
