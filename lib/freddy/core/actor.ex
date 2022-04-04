@@ -167,16 +167,28 @@ defmodule Freddy.Core.Actor do
       @impl true
       def init({mod, config, initial}) do
         case mod.init(initial) do
-          {:ok, given} -> {:ok, state(mod: mod, config: config, given: given)}
-          ignore_or_stop -> ignore_or_stop
+          {:ok, given} ->
+            {:ok, state(mod: mod, config: config, given: given)}
+
+          {:ok, given, options} ->
+            {:ok, state(mod: mod, config: config, given: given), options}
+
+          :ignore ->
+            :ignore
+
+          {:stop, _reason} = stop ->
+            stop
         end
       end
 
       @impl true
       def handle_disconnected(reason, state(mod: mod, given: given) = state) do
         case mod.handle_disconnected(reason, given) do
-          {:noreply, new_given} -> {:noreply, state(state, given: new_given)}
-          {:stop, reason, new_given} -> {:stop, reason, state(state, given: new_given)}
+          {:noreply, new_given} ->
+            {:noreply, state(state, given: new_given)}
+
+          {:stop, reason, new_given} ->
+            {:stop, reason, state(state, given: new_given)}
         end
       end
 
