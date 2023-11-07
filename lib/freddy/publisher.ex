@@ -23,10 +23,10 @@ defmodule Freddy.Publisher do
           {:ok, %{last_ignored: false}}
         end
 
-        def before_publication(_payload, _routing_key, _opts, %{last_ignored: false}) do
+        def before_publication(_payload, _routing_key, _opts, _from, _timeout, %{last_ignored: false}) do
           {:ignore, %{last_ignored: true}}
         end
-        def before_publication(_payload, _routing_key, _opts, %{last_ignored: true}) do
+        def before_publication(_payload, _routing_key, _opts, _from, _timeout, %{last_ignored: true}) do
           {:ok, %{last_ignored: false}}
         end
       end
@@ -98,9 +98,10 @@ defmodule Freddy.Publisher do
   main loop and call `terminate(reason, state)` before the process exits with
   reason `reason`.
   """
-  @callback before_publication(payload, routing_key, opts :: Keyword.t(), state) ::
+  @callback before_publication(payload, routing_key, opts :: Keyword.t(), from :: any(), timeout(), state) ::
               {:ok, state}
               | {:ok, payload, routing_key, opts :: Keyword.t(), state}
+              | {:backlogged, state}
               | {:ignore, state}
               | {:stop, reason :: term, state}
 
@@ -137,7 +138,7 @@ defmodule Freddy.Publisher do
 
       @impl true
       def init(initial) do
-        {:ok, initial}
+        {:ok, initial, []}
       end
 
       @impl true
@@ -151,7 +152,7 @@ defmodule Freddy.Publisher do
       end
 
       @impl true
-      def before_publication(_payload, _routing_key, _opts, state) do
+      def before_publication(_payload, _routing_key, _opts, _from, _timeout, state) do
         {:ok, state}
       end
 
@@ -221,21 +222,53 @@ defmodule Freddy.Publisher do
     * `:app_id` - publishing application ID.
   """
   @spec publish(
-          GenServer.server() | connection_info,
-          payload :: term,
-          routing_key :: String.t(),
-          opts :: Keyword.t()
-        ) :: :ok
+    GenServer.server(),
+    payload :: term,
+    routing_key :: String.t(),
+    opts :: Keyword.t()
+  ) :: :ok
+
   def publish(publisher, payload, routing_key \\ "", opts \\ [])
 
-  def publish(%{channel: channel, exchange: exchange} = _meta, payload, routing_key, opts) do
-    Freddy.Core.Exchange.publish(exchange, channel, payload, routing_key, opts)
+  def publish(publisher, payload, routing_key, opts) do
+    cast(publisher, {:"$publish", payload, routing_key, opts, :infinity})
   end
 
-  def publish(publisher, payload, routing_key, opts) do
-    opts = Freddy.Tracer.add_context_to_opts(opts)
+  @spec republish_now(
+    GenServer.server(),
+    from :: any(),
+    payload :: term,
+    routing_key :: String.t(),
+    opts :: Keyword.t(),
+    timeout()
+  ) :: :ok
+  def republish_now(publisher, from, payload, routing_key \\ "", opts \\ [], timeout \\ 60_000)
 
-    cast(publisher, {:"$publish", payload, routing_key, opts})
+  def republish_now(publisher, from, payload, routing_key, opts, timeout) do
+    cast(publisher, {:"$republish", from, payload, routing_key, opts, timeout})
+  end
+
+  @spec publish_now(
+    GenServer.server(),
+    payload :: term,
+    routing_key :: String.t(),
+    opts :: Keyword.t(),
+    timeout()
+  ) :: :ok
+  def publish_now(publisher, payload, routing_key \\ "", opts \\ [], timeout \\ 60_000)
+
+  def publish_now(publisher, payload, routing_key, opts, timeout) do
+    call(publisher, {:"$publish", payload, routing_key, opts, timeout}, timeout + 5000)
+  end
+
+  @spec publish_by_meta(
+    connection_info,
+    payload :: term,
+    routing_key :: String.t(),
+    opts :: Keyword.t()
+  ) :: :ok
+  def publish_by_meta(%{channel: channel, exchange: exchange} = _meta, payload, routing_key, opts) do
+    Freddy.Core.Exchange.publish(exchange, channel, payload, routing_key, opts)
   end
 
   alias Freddy.Core.Exchange
@@ -255,12 +288,38 @@ defmodule Freddy.Publisher do
   end
 
   @impl true
-  def handle_cast({:"$publish", payload, routing_key, opts}, state) do
-    opts = Freddy.Tracer.attach_context_from_opts(opts)
-
-    handle_publish(payload, routing_key, opts, state)
+  def handle_call({:"$publish", payload, routing_key, opts, timeout}, from, state) do
+    handle_publish_now(payload, routing_key, opts, timeout, from, state)
   end
 
+  @impl true
+  def handle_call(message, from, state) do
+    super(message, from, state)
+  end
+
+  @impl true
+  def handle_cast({:"$republish", from, payload, routing_key, opts, timeout}, state) do
+    case handle_publish_now(payload, routing_key, opts, timeout, from, state) do
+      {:reply, reply, state} ->
+        if from do
+          GenServer.reply(from, reply)
+        end
+        {:noreply, state}
+
+      {:noreply, _state} = res ->
+        res
+
+      {:stop, _reason, _state} = res ->
+        res
+    end
+  end
+
+  @impl true
+  def handle_cast({:"$publish", payload, routing_key, opts, timeout}, state) do
+    handle_publish_later(payload, routing_key, opts, timeout, state)
+  end
+
+  @impl true
   def handle_cast(message, state) do
     super(message, state)
   end
@@ -276,13 +335,81 @@ defmodule Freddy.Publisher do
     end
   end
 
-  defp handle_publish(payload, routing_key, opts, state(mod: mod, given: given) = state) do
-    case mod.before_publication(payload, routing_key, opts, given) do
+  defp handle_publish_now(
+    payload,
+    routing_key,
+    opts,
+    timeout,
+    from,
+    state(mod: mod, given: given) = state
+  ) do
+    case mod.before_publication(payload, routing_key, opts, from, timeout, given) do
       {:ok, new_given} ->
-        do_publish(payload, routing_key, opts, state(state, given: new_given))
+        do_publish_now(payload, routing_key, opts, state(state, given: new_given))
 
       {:ok, new_payload, new_routing_key, new_opts, new_given} ->
-        do_publish(new_payload, new_routing_key, new_opts, state(state, given: new_given))
+        do_publish_now(new_payload, new_routing_key, new_opts, state(state, given: new_given))
+
+      {:backlogged, new_given} ->
+        {:noreply, state(state, given: new_given)}
+
+      {:ignore, new_given} ->
+        {:reply, :ok, state(state, given: new_given)}
+
+      {:stop, reason, new_given} ->
+        {:stop, reason, state(state, given: new_given)}
+    end
+  end
+
+  defp do_publish_now(
+    payload,
+    routing_key,
+    opts,
+    state(channel: channel, exchange: exchange, mod: mod, given: given) = state
+  ) do
+    case mod.encode_message(payload, routing_key, opts, given) do
+      {:ok, new_payload, new_given} ->
+        reply = publish_by_meta(
+          %{exchange: exchange, channel: channel},
+          new_payload,
+          routing_key,
+          opts
+        )
+        {:reply, reply, state(state, given: new_given)}
+
+      {:ok, new_payload, new_routing_key, new_opts, new_given} ->
+        reply = publish_by_meta(
+          %{exchange: exchange, channel: channel},
+          new_payload,
+          new_routing_key,
+          new_opts
+        )
+        {:reply, reply, state(state, given: new_given)}
+
+      {:ignore, new_given} ->
+        {:reply, :ok, state(state, given: new_given)}
+
+      {:stop, reason, new_given} ->
+        {:stop, reason, state(state, given: new_given)}
+    end
+  end
+
+  defp handle_publish_later(
+    payload,
+    routing_key,
+    opts,
+    timeout,
+    state(mod: mod, given: given) = state
+  ) do
+    case mod.before_publication(payload, routing_key, opts, nil, timeout, given) do
+      {:ok, new_given} ->
+        do_publish_later(payload, routing_key, opts, state(state, given: new_given))
+
+      {:ok, new_payload, new_routing_key, new_opts, new_given} ->
+        do_publish_later(new_payload, new_routing_key, new_opts, state(state, given: new_given))
+
+      {:backlogged, new_given} ->
+        {:noreply, state(state, given: new_given)}
 
       {:ignore, new_given} ->
         {:noreply, state(state, given: new_given)}
@@ -292,19 +419,19 @@ defmodule Freddy.Publisher do
     end
   end
 
-  defp do_publish(
-         payload,
-         routing_key,
-         opts,
-         state(channel: channel, exchange: exchange, mod: mod, given: given) = state
-       ) do
+  defp do_publish_later(
+    payload,
+    routing_key,
+    opts,
+    state(channel: channel, exchange: exchange, mod: mod, given: given) = state
+  ) do
     case mod.encode_message(payload, routing_key, opts, given) do
       {:ok, new_payload, new_given} ->
-        publish(%{exchange: exchange, channel: channel}, new_payload, routing_key, opts)
+        publish_by_meta(%{exchange: exchange, channel: channel}, new_payload, routing_key, opts)
         {:noreply, state(state, given: new_given)}
 
       {:ok, new_payload, new_routing_key, new_opts, new_given} ->
-        publish(%{exchange: exchange, channel: channel}, new_payload, new_routing_key, new_opts)
+        publish_by_meta(%{exchange: exchange, channel: channel}, new_payload, new_routing_key, new_opts)
         {:noreply, state(state, given: new_given)}
 
       {:ignore, new_given} ->

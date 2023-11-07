@@ -2,7 +2,7 @@ defmodule Freddy.Connection do
   @moduledoc """
   Stable AMQP connection.
   """
-
+  alias Freddy.Connection.ChannelManager
   alias Freddy.Utils.Backoff
   alias Freddy.Utils.MultikeyMap
   alias Freddy.Adapter
@@ -69,9 +69,12 @@ defmodule Freddy.Connection do
         ]
 
   @typedoc @params_docs[:adapter]
+
   @type adapter :: :amqp | :sandbox | module
 
   use Connection
+
+  @default_timeout 30_000
 
   @doc """
   Start a new AMQP connection.
@@ -110,7 +113,7 @@ defmodule Freddy.Connection do
   Closes an AMQP connection. This will cause process to reconnect.
   """
   @spec close(connection, timeout) :: :ok | {:error, reason :: term}
-  def close(connection, timeout \\ 5000) do
+  def close(connection, timeout \\ @default_timeout) do
     Connection.call(connection, {:close, timeout})
   end
 
@@ -125,8 +128,17 @@ defmodule Freddy.Connection do
   Opens a new AMQP channel
   """
   @spec open_channel(connection, timeout) :: {:ok, Channel.t()} | {:error, reason :: term}
-  def open_channel(connection, timeout \\ 5000) do
-    Connection.call(connection, :open_channel, timeout)
+  def open_channel(connection, timeout \\ @default_timeout) do
+    timeout_at = System.monotonic_time(:millisecond) + timeout
+    Connection.call(connection, {:open_channel, timeout_at}, timeout + 1000)
+  end
+
+  @doc """
+  Determines if the specified channel exists on this connection or not
+  """
+  @spec has_channel?(connection, Channel.t(), timeout) :: boolean()
+  def has_channel?(connection, %Channel{} = chan, timeout \\ @default_timeout) do
+    Connection.call(connection, {:has_channel?, chan}, timeout)
   end
 
   @doc """
@@ -154,6 +166,8 @@ defmodule Freddy.Connection do
     adapter: nil,
     hosts: nil,
     connection: nil,
+    channel_manager_pid: nil,
+    pending_open_channels: %{},
     channels: MultikeyMap.new(),
     backoff: Backoff.new([])
 
@@ -187,12 +201,37 @@ defmodule Freddy.Connection do
   end
 
   @impl true
-  def connect(_info, state(adapter: adapter, hosts: hosts, backoff: backoff) = state) do
+  def connect(
+    _info,
+    state(
+      channel_manager_pid: channel_manager_pid,
+      adapter: adapter,
+      hosts: hosts,
+      backoff: backoff
+    ) = state
+  ) do
     case do_connect(hosts, adapter, nil) do
       {:ok, connection} ->
         adapter.link_connection(connection)
-        new_backoff = Backoff.succeed(backoff)
-        {:ok, state(state, connection: connection, backoff: new_backoff)}
+        if channel_manager_pid do
+          # unlink the channel manager so its exit signal doesn't kill us in the process
+          Process.unlink(channel_manager_pid)
+          # and then kill it, we don't care what channels its opening that connection is likely
+          # long dead.
+          Process.exit(channel_manager_pid, :kill)
+        end
+
+        case ChannelManager.start_link(self(), adapter, connection) do
+          {:ok, channel_manager_pid} ->
+            new_backoff = Backoff.succeed(backoff)
+
+            {:ok, state(state,
+              channel_manager_pid: channel_manager_pid,
+              pending_open_channels: %{},
+              connection: connection,
+              backoff: new_backoff
+            )}
+        end
 
       _error ->
         {interval, new_backoff} = Backoff.fail(backoff)
@@ -224,52 +263,133 @@ defmodule Freddy.Connection do
     {:reply, {:error, :closed}, state}
   end
 
+  @impl true
   def handle_call(:get, _from, state(connection: connection) = state) do
     {:reply, {:ok, connection}, state}
   end
 
+  @impl true
   def handle_call(
-        :open_channel,
-        {from, _ref},
-        state(adapter: adapter, connection: connection, channels: channels) = state
-      ) do
-    try do
-      case Channel.open(adapter, connection) do
-        {:ok, %{chan: pid} = chan} ->
-          monitor_ref = Process.monitor(from)
-          channel_ref = Channel.monitor(chan)
-          channels = MultikeyMap.put(channels, [monitor_ref, channel_ref, pid], chan)
-
-          {:reply, {:ok, chan}, state(state, channels: channels)}
-
-        {:error, _reason} = reply ->
-          {:reply, reply, state}
-      end
-    catch
-      :exit, {:noproc, _} ->
-        {:reply, {:error, :closed}, state}
-
-      _, _ ->
-        {:reply, {:error, :closed}, state}
-    end
+    {:open_channel, timeout_at},
+    from,
+    state(
+      pending_open_channels: pending_open_channels,
+      channel_manager_pid: channel_manager_pid
+    ) = state
+  ) do
+    :ok = ChannelManager.open_channel(channel_manager_pid, from, timeout_at)
+    pending_open_channels = Map.put(pending_open_channels, from, timeout_at)
+    {:noreply, state(state, pending_open_channels: pending_open_channels)}
   end
 
-  def handle_call({:close, timeout}, _from, state(adapter: adapter, connection: connection) = state) do
+  @impl true
+  def handle_call(
+    {:has_channel?, %Channel{chan: pid}},
+    _from,
+    state(
+      channels: channels
+    ) = state
+  ) do
+    {:reply, MultikeyMap.has_key?(channels, pid), state}
+  end
+
+  @impl true
+  def handle_call(
+    {:close, timeout},
+    _from,
+    state(adapter: adapter, connection: connection) = state
+  ) do
     {:disconnect, :close, close_connection(adapter, connection, timeout), state}
   end
 
   @impl true
   def handle_info(
-        {:EXIT, connection, {:shutdown, :normal}},
-        state(connection: connection) = state
-      ) do
+    {:"$channel_manager", {:open_channel_resp, {from, _ref} = sender, result}},
+    state(
+      pending_open_channels: pending_open_channels,
+      channels: channels
+    ) = state
+  ) do
+    now = System.monotonic_time(:millisecond)
+    case result do
+      {:ok, %Channel{chan: pid} = chan} ->
+        case Map.pop(pending_open_channels, sender) do
+          {nil, pending_open_channels} ->
+            # we don't have proof that this actually belonged to anyone, close it
+            Channel.close(chan)
+            {:noreply, state(state, pending_open_channels: pending_open_channels)}
+
+          {timeout_at, pending_open_channels} ->
+            state = state(state, pending_open_channels: pending_open_channels)
+
+            if now < timeout_at do
+              monitor_ref = Process.monitor(from)
+              channel_ref = Channel.monitor(chan)
+              channels = MultikeyMap.put(channels, [monitor_ref, channel_ref, pid], chan)
+
+              GenServer.reply(sender, {:ok, chan})
+              {:noreply, state(state, channels: channels)}
+            else
+              Channel.close(chan)
+              # let it timeout on the sender side
+              {:noreply, state}
+            end
+        end
+
+      {:error, :timeout} ->
+        # could not open connection in time, just timeout normally
+        {:noreply, state}
+
+      {:error, _reason} = reply ->
+        GenServer.reply(sender, reply)
+        {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info(
+    {:EXIT, connection, {:shutdown, :normal}},
+    state(connection: connection) = state
+  ) do
     {:noreply, state(state, connection: nil)}
   end
 
+  @impl true
   def handle_info({:EXIT, connection, reason}, state(connection: connection) = state) do
     {:disconnect, {:error, reason}, state}
   end
 
+  @impl true
+  def handle_info(
+    {:EXIT, channel_manager_pid, {:shutdown, :normal}},
+    state(channel_manager_pid: channel_manager_pid) = state
+  ) do
+    {:noreply, state(state, channel_manager_pid: nil)}
+  end
+
+  @impl true
+  def handle_info(
+    {:EXIT, channel_manager_pid, {:shutdown, :normal}},
+    state(
+      channel_manager_pid: channel_manager_pid,
+      adapter: adapter,
+      connection: connection
+    ) = state
+  ) when not is_nil(connection) do
+    case ChannelManager.start_link(self(), adapter, connection) do
+      {:ok, channel_manager_pid} ->
+        state =
+          state(
+            state,
+            pending_open_channels: %{},
+            channel_manager_pid: channel_manager_pid
+          )
+
+        {:noreply, state}
+    end
+  end
+
+  @impl true
   def handle_info({:EXIT, pid, reason}, state(channels: channels) = state) do
     case MultikeyMap.pop(channels, pid) do
       {nil, ^channels} ->
@@ -280,10 +400,12 @@ defmodule Freddy.Connection do
     end
   end
 
+  @impl true
   def handle_info({:DOWN, ref, _, _pid, _reason}, state) do
     {:noreply, close_channel(ref, state)}
   end
 
+  @impl true
   def handle_info(_info, state) do
     {:noreply, state}
   end
