@@ -14,13 +14,15 @@ defmodule Freddy.Integration.ConnectionTest do
 
       try do
         assert {:ok, conn_pid} = Connection.get_connection(pid)
-        _data = :amqp_connection.info(conn_pid, [
-          :type,
-          :server_properties,
-          :num_channels,
-          :channel_max,
-          :is_closing,
-        ])
+
+        _data =
+          :amqp_connection.info(conn_pid, [
+            :type,
+            :server_properties,
+            :num_channels,
+            :channel_max,
+            :is_closing
+          ])
       after
         Connection.stop(pid)
       end
