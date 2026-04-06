@@ -10,31 +10,31 @@ jobs:
   elixir:
     services:
       rabbitmq:
-        image: rabbitmq:3.8-alpine
+        image: rabbitmq:4.2-alpine
         ports:
           - "5672:5672"
     name: OTP ${{matrix.pair.otp_version}} / Elixir ${{matrix.pair.elixir}}
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
           - pair:
-              elixir: '1.11'
-              otp: '23.0'
+              elixir: '1.17'
+              otp: '26.0'
           - pair:
-              elixir: '1.12'
-              otp: '24.0'
+              elixir: '1.18'
+              otp: '27.0'
           - pair:
-              elixir: '1.13'
-              otp: '24.0'
+              elixir: '1.19'
+              otp: '28.0'
             lint: lint
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
       - uses: erlef/setup-beam@v1
         with:
           otp-version: ${{matrix.pair.otp}}
           elixir-version: ${{matrix.pair.elixir}}
-      - uses: actions/cache@v2
+      - uses: actions/cache@v5
         with:
           path: |
             deps
