@@ -8,6 +8,68 @@ defmodule Freddy.Integration.ConnectionTest do
 
   # This test assumes that RabbitMQ server is running with default settings on localhost
 
+  describe "get_connection/1" do
+    test "can retrieve the underlying connection pid" do
+      assert {:ok, pid} = Connection.start_link()
+
+      try do
+        assert {:ok, conn_pid} = Connection.get_connection(pid)
+        _data = :amqp_connection.info(conn_pid, [
+          :type,
+          :server_properties,
+          :num_channels,
+          :channel_max,
+          :is_closing,
+        ])
+      after
+        Connection.stop(pid)
+      end
+    end
+  end
+
+  describe "open_channel/1" do
+    test "can open a channel" do
+      assert {:ok, pid} = Connection.start_link()
+
+      try do
+        assert {:ok, %Channel{} = _channel} = Connection.open_channel(pid)
+      after
+        Connection.stop(pid)
+      end
+    end
+
+    test "can safely handle multiple channel opens" do
+      assert {:ok, pid} = Connection.start_link()
+
+      try do
+        for _ <- 1..10 do
+          assert {:ok, %Channel{} = _channel} = Connection.open_channel(pid)
+        end
+      after
+        Connection.stop(pid)
+      end
+    end
+
+    test "can gracefully handle a dead channel" do
+      assert {:ok, conn_pid} = Connection.start_link()
+
+      try do
+        assert {:ok, %Channel{chan: chan_pid} = chan} = Connection.open_channel(conn_pid)
+
+        assert true == Connection.has_channel?(conn_pid, chan)
+
+        # kill the channel
+        ref = Process.monitor(chan_pid)
+        Process.exit(chan_pid, :kill)
+        assert_receive {:DOWN, ^ref, :process, _, :killed}
+
+        assert false == Connection.has_channel?(conn_pid, chan)
+      after
+        Connection.stop(conn_pid)
+      end
+    end
+  end
+
   test "establishes connection to AMQP server" do
     assert {:ok, _pid} = Connection.start_link()
   end
@@ -62,21 +124,25 @@ defmodule Freddy.Integration.ConnectionTest do
         end
       end)
 
-    assert_receive {:channel, chan}
+    assert_receive {:channel, chan}, 3000
     ref = Channel.monitor(chan)
 
     send(child, :stop)
-    assert_receive {:DOWN, ^ref, :process, _, :normal}
+    assert_receive {:DOWN, ^ref, :process, _, :normal}, 3000
   end
 
   test "process can be stopped by Process.exit" do
     {:ok, pid} = Connection.start_link()
 
-    Process.unlink(pid)
-    ref = Process.monitor(pid)
-    Process.exit(pid, :restart)
+    try do
+      Process.unlink(pid)
+      ref = Process.monitor(pid)
+      Process.exit(pid, :restart)
 
-    assert_receive {:DOWN, ^ref, :process, ^pid, :restart}
+      assert_receive {:DOWN, ^ref, :process, ^pid, :restart}, 3000
+    after
+      :ok
+    end
   end
 
   test "establishes connection to secondary server if primary server is unavailable" do

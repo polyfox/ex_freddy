@@ -36,12 +36,12 @@ defmodule Freddy.Mixfile do
 
   defp deps do
     [
-      {:amqp_client, "~> 3.6"},
+      {:amqp_client, "~> 3.6 or ~> 4.1"},
       {:connection, "~> 1.0"},
       {:jason, "~> 1.0"},
       {:backoff, "~> 1.1"},
       {:opentelemetry_api, "~> 1.0"},
-      {:amqp, "~> 0.3 or ~> 1.0", only: :test},
+      {:amqp, "~> 0.3 or ~> 1.0 or ~> 4.0", only: :test},
       {:ex_doc, "~> 0.16", only: :dev},
       {:dialyxir, "~> 0.5", only: :dev, runtime: false},
       {:stream_data, "~> 0.4", only: :test},
