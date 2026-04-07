@@ -202,17 +202,18 @@ defmodule Freddy.Connection do
 
   @impl true
   def connect(
-    _info,
-    state(
-      channel_manager_pid: channel_manager_pid,
-      adapter: adapter,
-      hosts: hosts,
-      backoff: backoff
-    ) = state
-  ) do
+        _info,
+        state(
+          channel_manager_pid: channel_manager_pid,
+          adapter: adapter,
+          hosts: hosts,
+          backoff: backoff
+        ) = state
+      ) do
     case do_connect(hosts, adapter, nil) do
       {:ok, connection} ->
         adapter.link_connection(connection)
+
         if channel_manager_pid do
           # unlink the channel manager so its exit signal doesn't kill us in the process
           Process.unlink(channel_manager_pid)
@@ -225,12 +226,13 @@ defmodule Freddy.Connection do
           {:ok, channel_manager_pid} ->
             new_backoff = Backoff.succeed(backoff)
 
-            {:ok, state(state,
-              channel_manager_pid: channel_manager_pid,
-              pending_open_channels: %{},
-              connection: connection,
-              backoff: new_backoff
-            )}
+            {:ok,
+             state(state,
+               channel_manager_pid: channel_manager_pid,
+               pending_open_channels: %{},
+               connection: connection,
+               backoff: new_backoff
+             )}
         end
 
       _error ->
@@ -270,13 +272,13 @@ defmodule Freddy.Connection do
 
   @impl true
   def handle_call(
-    {:open_channel, timeout_at},
-    from,
-    state(
-      pending_open_channels: pending_open_channels,
-      channel_manager_pid: channel_manager_pid
-    ) = state
-  ) do
+        {:open_channel, timeout_at},
+        from,
+        state(
+          pending_open_channels: pending_open_channels,
+          channel_manager_pid: channel_manager_pid
+        ) = state
+      ) do
     :ok = ChannelManager.open_channel(channel_manager_pid, from, timeout_at)
     pending_open_channels = Map.put(pending_open_channels, from, timeout_at)
     {:noreply, state(state, pending_open_channels: pending_open_channels)}
@@ -284,33 +286,32 @@ defmodule Freddy.Connection do
 
   @impl true
   def handle_call(
-    {:has_channel?, %Channel{chan: pid}},
-    _from,
-    state(
-      channels: channels
-    ) = state
-  ) do
+        {:has_channel?, %Channel{chan: pid}},
+        _from,
+        state(channels: channels) = state
+      ) do
     {:reply, MultikeyMap.has_key?(channels, pid), state}
   end
 
   @impl true
   def handle_call(
-    {:close, timeout},
-    _from,
-    state(adapter: adapter, connection: connection) = state
-  ) do
+        {:close, timeout},
+        _from,
+        state(adapter: adapter, connection: connection) = state
+      ) do
     {:disconnect, :close, close_connection(adapter, connection, timeout), state}
   end
 
   @impl true
   def handle_info(
-    {:"$channel_manager", {:open_channel_resp, {from, _ref} = sender, result}},
-    state(
-      pending_open_channels: pending_open_channels,
-      channels: channels
-    ) = state
-  ) do
+        {:"$channel_manager", {:open_channel_resp, {from, _ref} = sender, result}},
+        state(
+          pending_open_channels: pending_open_channels,
+          channels: channels
+        ) = state
+      ) do
     now = System.monotonic_time(:millisecond)
+
     case result do
       {:ok, %Channel{chan: pid} = chan} ->
         case Map.pop(pending_open_channels, sender) do
@@ -348,9 +349,9 @@ defmodule Freddy.Connection do
 
   @impl true
   def handle_info(
-    {:EXIT, connection, {:shutdown, :normal}},
-    state(connection: connection) = state
-  ) do
+        {:EXIT, connection, {:shutdown, :normal}},
+        state(connection: connection) = state
+      ) do
     {:noreply, state(state, connection: nil)}
   end
 
@@ -361,21 +362,22 @@ defmodule Freddy.Connection do
 
   @impl true
   def handle_info(
-    {:EXIT, channel_manager_pid, {:shutdown, :normal}},
-    state(channel_manager_pid: channel_manager_pid) = state
-  ) do
+        {:EXIT, channel_manager_pid, {:shutdown, :normal}},
+        state(channel_manager_pid: channel_manager_pid) = state
+      ) do
     {:noreply, state(state, channel_manager_pid: nil)}
   end
 
   @impl true
   def handle_info(
-    {:EXIT, channel_manager_pid, {:shutdown, :normal}},
-    state(
-      channel_manager_pid: channel_manager_pid,
-      adapter: adapter,
-      connection: connection
-    ) = state
-  ) when not is_nil(connection) do
+        {:EXIT, channel_manager_pid, {:shutdown, :normal}},
+        state(
+          channel_manager_pid: channel_manager_pid,
+          adapter: adapter,
+          connection: connection
+        ) = state
+      )
+      when not is_nil(connection) do
     case ChannelManager.start_link(self(), adapter, connection) do
       {:ok, channel_manager_pid} ->
         state =

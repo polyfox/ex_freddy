@@ -11,7 +11,7 @@ defmodule Freddy.Adapter.AMQP.Connection do
         username: Keyword.get(options, :username, "guest"),
         password: Keyword.get(options, :password, "guest"),
         virtual_host: Keyword.get(options, :virtual_host, "/"),
-        host: Keyword.get(options, :host, 'localhost') |> to_charlist(),
+        host: Keyword.get(options, :host, ~c"localhost") |> to_charlist(),
         port: Keyword.get(options, :port, :undefined),
         channel_max: Keyword.get(options, :channel_max, 0),
         frame_max: Keyword.get(options, :frame_max, 0),
@@ -31,12 +31,13 @@ defmodule Freddy.Adapter.AMQP.Connection do
   end
 
   def open(uri) when is_binary(uri) do
-    case uri |> to_charlist() |> :amqp_uri.parse() do
-      {:ok, amqp_params} -> do_open(amqp_params)
-      error -> error
-    end
+    case :amqp_uri.parse(to_charlist(uri)) do
+      {:ok, amqp_params} ->
+        do_open(amqp_params)
 
-    do_open(uri)
+      error ->
+        error
+    end
   end
 
   defp do_open(amqp_params) do

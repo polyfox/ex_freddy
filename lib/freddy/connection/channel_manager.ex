@@ -25,10 +25,11 @@ defmodule Freddy.Connection.ChannelManager do
 
   @impl true
   def handle_cast(
-    {:open_channel, ref, timeout_at},
-    state(adapter: adapter, connection: connection) = state
-  ) do
+        {:open_channel, ref, timeout_at},
+        state(adapter: adapter, connection: connection) = state
+      ) do
     now = System.monotonic_time(:millisecond)
+
     if now < timeout_at do
       try do
         case Channel.open(adapter, connection) do

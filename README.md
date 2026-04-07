@@ -1,17 +1,20 @@
 # Freddy
 
-[![Build Status](https://travis-ci.org/salemove/ex_freddy.svg?branch=master)](https://travis-ci.org/salemove/ex_freddy)
-
 OTP behaviours for creating AMQP publishers and consumers.
 
-**The project is in active development stage, expect breaking changes between minor versions up to 1.0.**
+**This project is in "fix stuff when it breaks" mode, in other words, your PRs may be ignored**
+
+And no, this fork isn't going back into mainline, it is kept and maintained by the polyfox team,
+it may lag behind in changes, or go a completely different route, use at your own risk, or,
+just fork it, no harm, no foul.
 
 ## Installation
 
 Add `freddy` to your list of dependencies in `mix.exs`:
+
 ```elixir
 def deps do
-  [{:freddy, "~> 0.15.0"}]
+  [{:freddy, "~> 0.18.0", git: "https://github.com/polyfox/ex_freddy"}]
 end
 ```
 

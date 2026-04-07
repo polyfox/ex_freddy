@@ -79,16 +79,8 @@ defmodule Freddy.Core.Exchange do
   @spec publish(t, Freddy.Core.Channel.t(), String.t(), String.t(), Keyword.t()) ::
           :ok | {:error, atom}
   def publish(%__MODULE__{} = exchange, %{adapter: adapter, chan: chan}, message, routing_key, opts) do
-    Freddy.Tracer.with_send_span(exchange, routing_key, fn tracing_headers ->
-      opts =
-        if opts[:disable_trace_propagation] do
-          opts
-        else
-          new_headers = Keyword.merge(opts[:headers] || [], tracing_headers)
-          Keyword.put(opts, :headers, new_headers)
-        end
-
-      adapter.publish(chan, exchange.name, routing_key, message, opts)
+    Freddy.Tracer.with_send_span(exchange, routing_key, fn ->
+      {adapter.publish(chan, exchange.name, routing_key, message, opts), %{}}
     end)
   end
 end

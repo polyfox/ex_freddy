@@ -111,8 +111,12 @@ defmodule Freddy.Adapter.Sandbox do
 
   @impl true
   def close_channel(channel) do
-    register(channel, :close_channel, [channel])
-    Channel.close(channel)
+    if Process.alive?(channel) do
+      register(channel, :close_channel, [channel])
+      Channel.close(channel)
+    else
+      :ok
+    end
   end
 
   @impl true

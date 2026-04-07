@@ -98,7 +98,14 @@ defmodule Freddy.Publisher do
   main loop and call `terminate(reason, state)` before the process exits with
   reason `reason`.
   """
-  @callback before_publication(payload, routing_key, opts :: Keyword.t(), from :: any(), timeout(), state) ::
+  @callback before_publication(
+              payload,
+              routing_key,
+              opts :: Keyword.t(),
+              from :: any(),
+              timeout(),
+              state
+            ) ::
               {:ok, state}
               | {:ok, payload, routing_key, opts :: Keyword.t(), state}
               | {:backlogged, state}
@@ -222,11 +229,11 @@ defmodule Freddy.Publisher do
     * `:app_id` - publishing application ID.
   """
   @spec publish(
-    GenServer.server(),
-    payload :: term,
-    routing_key :: String.t(),
-    opts :: Keyword.t()
-  ) :: :ok
+          GenServer.server(),
+          payload :: term,
+          routing_key :: String.t(),
+          opts :: Keyword.t()
+        ) :: :ok
 
   def publish(publisher, payload, routing_key \\ "", opts \\ [])
 
@@ -235,13 +242,13 @@ defmodule Freddy.Publisher do
   end
 
   @spec republish_now(
-    GenServer.server(),
-    from :: any(),
-    payload :: term,
-    routing_key :: String.t(),
-    opts :: Keyword.t(),
-    timeout()
-  ) :: :ok
+          GenServer.server(),
+          from :: any(),
+          payload :: term,
+          routing_key :: String.t(),
+          opts :: Keyword.t(),
+          timeout()
+        ) :: :ok
   def republish_now(publisher, from, payload, routing_key \\ "", opts \\ [], timeout \\ 60_000)
 
   def republish_now(publisher, from, payload, routing_key, opts, timeout) do
@@ -249,12 +256,12 @@ defmodule Freddy.Publisher do
   end
 
   @spec publish_now(
-    GenServer.server(),
-    payload :: term,
-    routing_key :: String.t(),
-    opts :: Keyword.t(),
-    timeout()
-  ) :: :ok
+          GenServer.server(),
+          payload :: term,
+          routing_key :: String.t(),
+          opts :: Keyword.t(),
+          timeout()
+        ) :: :ok
   def publish_now(publisher, payload, routing_key \\ "", opts \\ [], timeout \\ 60_000)
 
   def publish_now(publisher, payload, routing_key, opts, timeout) do
@@ -262,11 +269,11 @@ defmodule Freddy.Publisher do
   end
 
   @spec publish_by_meta(
-    connection_info,
-    payload :: term,
-    routing_key :: String.t(),
-    opts :: Keyword.t()
-  ) :: :ok
+          connection_info,
+          payload :: term,
+          routing_key :: String.t(),
+          opts :: Keyword.t()
+        ) :: :ok
   def publish_by_meta(%{channel: channel, exchange: exchange} = _meta, payload, routing_key, opts) do
     Freddy.Core.Exchange.publish(exchange, channel, payload, routing_key, opts)
   end
@@ -304,6 +311,7 @@ defmodule Freddy.Publisher do
         if from do
           GenServer.reply(from, reply)
         end
+
         {:noreply, state}
 
       {:noreply, _state} = res ->
@@ -336,13 +344,13 @@ defmodule Freddy.Publisher do
   end
 
   defp handle_publish_now(
-    payload,
-    routing_key,
-    opts,
-    timeout,
-    from,
-    state(mod: mod, given: given) = state
-  ) do
+         payload,
+         routing_key,
+         opts,
+         timeout,
+         from,
+         state(mod: mod, given: given) = state
+       ) do
     case mod.before_publication(payload, routing_key, opts, from, timeout, given) do
       {:ok, new_given} ->
         do_publish_now(payload, routing_key, opts, state(state, given: new_given))
@@ -362,28 +370,32 @@ defmodule Freddy.Publisher do
   end
 
   defp do_publish_now(
-    payload,
-    routing_key,
-    opts,
-    state(channel: channel, exchange: exchange, mod: mod, given: given) = state
-  ) do
+         payload,
+         routing_key,
+         opts,
+         state(channel: channel, exchange: exchange, mod: mod, given: given) = state
+       ) do
     case mod.encode_message(payload, routing_key, opts, given) do
       {:ok, new_payload, new_given} ->
-        reply = publish_by_meta(
-          %{exchange: exchange, channel: channel},
-          new_payload,
-          routing_key,
-          opts
-        )
+        reply =
+          publish_by_meta(
+            %{exchange: exchange, channel: channel},
+            new_payload,
+            routing_key,
+            opts
+          )
+
         {:reply, reply, state(state, given: new_given)}
 
       {:ok, new_payload, new_routing_key, new_opts, new_given} ->
-        reply = publish_by_meta(
-          %{exchange: exchange, channel: channel},
-          new_payload,
-          new_routing_key,
-          new_opts
-        )
+        reply =
+          publish_by_meta(
+            %{exchange: exchange, channel: channel},
+            new_payload,
+            new_routing_key,
+            new_opts
+          )
+
         {:reply, reply, state(state, given: new_given)}
 
       {:ignore, new_given} ->
@@ -395,12 +407,12 @@ defmodule Freddy.Publisher do
   end
 
   defp handle_publish_later(
-    payload,
-    routing_key,
-    opts,
-    timeout,
-    state(mod: mod, given: given) = state
-  ) do
+         payload,
+         routing_key,
+         opts,
+         timeout,
+         state(mod: mod, given: given) = state
+       ) do
     case mod.before_publication(payload, routing_key, opts, nil, timeout, given) do
       {:ok, new_given} ->
         do_publish_later(payload, routing_key, opts, state(state, given: new_given))
@@ -420,18 +432,24 @@ defmodule Freddy.Publisher do
   end
 
   defp do_publish_later(
-    payload,
-    routing_key,
-    opts,
-    state(channel: channel, exchange: exchange, mod: mod, given: given) = state
-  ) do
+         payload,
+         routing_key,
+         opts,
+         state(channel: channel, exchange: exchange, mod: mod, given: given) = state
+       ) do
     case mod.encode_message(payload, routing_key, opts, given) do
       {:ok, new_payload, new_given} ->
         publish_by_meta(%{exchange: exchange, channel: channel}, new_payload, routing_key, opts)
         {:noreply, state(state, given: new_given)}
 
       {:ok, new_payload, new_routing_key, new_opts, new_given} ->
-        publish_by_meta(%{exchange: exchange, channel: channel}, new_payload, new_routing_key, new_opts)
+        publish_by_meta(
+          %{exchange: exchange, channel: channel},
+          new_payload,
+          new_routing_key,
+          new_opts
+        )
+
         {:noreply, state(state, given: new_given)}
 
       {:ignore, new_given} ->

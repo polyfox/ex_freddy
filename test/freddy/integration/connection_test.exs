@@ -14,13 +14,15 @@ defmodule Freddy.Integration.ConnectionTest do
 
       try do
         assert {:ok, conn_pid} = Connection.get_connection(pid)
-        _data = :amqp_connection.info(conn_pid, [
-          :type,
-          :server_properties,
-          :num_channels,
-          :channel_max,
-          :is_closing,
-        ])
+
+        _data =
+          :amqp_connection.info(conn_pid, [
+            :type,
+            :server_properties,
+            :num_channels,
+            :channel_max,
+            :is_closing
+          ])
       after
         Connection.stop(pid)
       end
@@ -101,7 +103,7 @@ defmodule Freddy.Integration.ConnectionTest do
     assert {:ok, conn} = Connection.get_connection(pid)
 
     ref = Process.monitor(conn)
-    Process.exit(conn, {:shutdown, {:server_initiated_close, 320, 'Good bye'}})
+    Process.exit(conn, {:shutdown, {:server_initiated_close, 320, ~c'Good bye'}})
     assert_receive {:DOWN, ^ref, :process, _, _}
 
     assert {:ok, conn2} = Connection.get_connection(pid)
@@ -156,6 +158,6 @@ defmodule Freddy.Integration.ConnectionTest do
     assert is_pid(conn)
     assert [amqp_params: params] = :amqp_connection.info(conn, [:amqp_params])
     amqp_params_network(host: host) = params
-    assert host == '127.0.0.1'
+    assert host == ~c'127.0.0.1'
   end
 end
