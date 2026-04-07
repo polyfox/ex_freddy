@@ -280,7 +280,7 @@ defmodule Freddy.Integration.RPC.ClientTest do
     assert {:ok, conn} = Freddy.Connection.get_connection(connection)
 
     ref = Process.monitor(conn)
-    Process.exit(conn, {:shutdown, {:server_initiated_close, 320, 'Good bye'}})
+    Process.exit(conn, {:shutdown, {:server_initiated_close, 320, ~c'Good bye'}})
     assert_receive {:DOWN, ^ref, :process, _, _}
 
     assert_receive {:disconnected, :shutdown}

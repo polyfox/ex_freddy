@@ -4,14 +4,8 @@ defmodule Freddy.Integration.ConsumerTest do
   defmodule TestConsumer do
     use Freddy.Consumer
 
-    @config [
-      queue: [name: "freddy-test-consumer-queue", opts: [auto_delete: true]],
-      exchange: [name: "freddy-test-topic-exchange", type: :topic, opts: [auto_delete: true]],
-      routing_keys: ~w(routing-key1 routing-key2)
-    ]
-
-    def start_link(conn, initial) do
-      Freddy.Consumer.start_link(__MODULE__, conn, @config, initial)
+    def start_link(conn, initial, config) do
+      Freddy.Consumer.start_link(__MODULE__, conn, config, initial)
     end
 
     @impl true
@@ -74,18 +68,29 @@ defmodule Freddy.Integration.ConsumerTest do
   defmodule TestPublisher do
     use Freddy.Publisher
 
-    @config [
-      exchange: [name: "freddy-test-topic-exchange", type: :topic, opts: [auto_delete: true]]
-    ]
-
-    def start_link(conn) do
-      Freddy.Publisher.start_link(__MODULE__, conn, @config, nil)
+    def start_link(conn, config) do
+      Freddy.Publisher.start_link(__MODULE__, conn, config, nil)
     end
+  end
+
+  defp consumer_config do
+    queue_name = "freddy-test-consumer-queue-#{System.unique_integer([:positive])}"
+    exchange_name = "freddy-test-topic-exchange-#{System.unique_integer([:positive])}"
+
+    [
+      queue: [name: queue_name, opts: [auto_delete: true]],
+      exchange: [name: exchange_name, type: :topic, opts: [auto_delete: true]],
+      routing_keys: ~w(routing-key1 routing-key2)
+    ]
+  end
+
+  defp publisher_config(config) do
+    [exchange: Keyword.fetch!(config, :exchange)]
   end
 
   describe "consumer initialization" do
     test "init/1 callback is called", %{connection: connection} do
-      {:ok, _consumer} = TestConsumer.start_link(connection, self())
+      {:ok, _consumer} = TestConsumer.start_link(connection, self(), consumer_config())
 
       assert_receive :init
     end
@@ -93,7 +98,7 @@ defmodule Freddy.Integration.ConsumerTest do
     test "handle_connected/2 callback is called when RabbitMQ channel is opened", %{
       connection: connection
     } do
-      {:ok, _consumer} = TestConsumer.start_link(connection, self())
+      {:ok, _consumer} = TestConsumer.start_link(connection, self(), consumer_config())
 
       assert_receive {:connected, %{queue: _, exchange: _}}
     end
@@ -101,7 +106,7 @@ defmodule Freddy.Integration.ConsumerTest do
     test "handle_ready/2 callback is called when RabbitMQ registers consumer", %{
       connection: connection
     } do
-      {:ok, _consumer} = TestConsumer.start_link(connection, self())
+      {:ok, _consumer} = TestConsumer.start_link(connection, self(), consumer_config())
 
       assert_receive {:ready, %{consumer_tag: _tag}}
     end
@@ -109,29 +114,31 @@ defmodule Freddy.Integration.ConsumerTest do
 
   describe "consumer main loop" do
     setup context do
-      {:ok, consumer} = TestConsumer.start_link(context[:connection], self())
+      config = consumer_config()
+      {:ok, consumer} = TestConsumer.start_link(context[:connection], self(), config)
       assert_receive :init
       assert_receive {:ready, _}
 
-      {:ok, Map.put(context, :consumer, consumer)}
+      {:ok, context |> Map.put(:consumer, consumer) |> Map.put(:config, config)}
     end
 
     test "handle_message/3 callback is called when RabbitMQ delivers valid JSON message", %{
-      connection: connection
+      connection: connection,
+      config: config
     } do
       payload = %{"key" => "value"}
       routing_key = "routing-key1"
 
-      {:ok, publisher} = TestPublisher.start_link(connection)
+      {:ok, publisher} = TestPublisher.start_link(connection, publisher_config(config))
       Freddy.Publisher.publish(publisher, payload, routing_key)
 
       assert_receive {:message, ^payload, %{routing_key: ^routing_key} = _meta}
     end
 
-    test "binds only to specified routing keys", %{connection: connection} do
+    test "binds only to specified routing keys", %{connection: connection, config: config} do
       routing_key = "unknown-routing-key"
 
-      {:ok, publisher} = TestPublisher.start_link(connection)
+      {:ok, publisher} = TestPublisher.start_link(connection, publisher_config(config))
       Freddy.Publisher.publish(publisher, %{}, routing_key)
 
       refute_receive {:message, _, %{routing_key: ^routing_key}}
@@ -143,7 +150,7 @@ defmodule Freddy.Integration.ConsumerTest do
       assert {:ok, conn} = Freddy.Connection.get_connection(connection)
 
       ref = Process.monitor(conn)
-      Process.exit(conn, {:shutdown, {:server_initiated_close, 320, 'Good bye'}})
+      Process.exit(conn, {:shutdown, {:server_initiated_close, 320, ~c'Good bye'}})
       assert_receive {:DOWN, ^ref, :process, _, _}
 
       assert_receive {:disconnected, :shutdown}

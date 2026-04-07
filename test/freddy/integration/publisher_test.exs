@@ -32,13 +32,27 @@ defmodule Freddy.Integration.PublisherTest do
     end
 
     @impl true
-    def before_publication(%{action: "keep"} = payload, routing_key, opts, pid) do
+    def before_publication(
+      %{action: "keep"} = payload,
+      routing_key,
+      opts,
+      _from,
+      _timeout,
+      pid
+    ) do
       send(pid, {:before_publication, payload, routing_key, opts})
 
       {:ok, pid}
     end
 
-    def before_publication(%{action: "change"} = payload, routing_key, opts, pid) do
+    def before_publication(
+      %{action: "change"} = payload,
+      routing_key,
+      opts,
+      _from,
+      _timeout,
+      pid
+    ) do
       new_payload = %{action: "change", state: "changed"}
       new_routing_key = routing_key <> ".changed"
       new_opts = opts ++ [changed: "added"]
@@ -121,7 +135,7 @@ defmodule Freddy.Integration.PublisherTest do
     assert {:ok, conn} = Freddy.Connection.get_connection(connection)
 
     ref = Process.monitor(conn)
-    Process.exit(conn, {:shutdown, {:server_initiated_close, 320, 'Good bye'}})
+    Process.exit(conn, {:shutdown, {:server_initiated_close, 320, ~c'Good bye'}})
     assert_receive {:DOWN, ^ref, :process, _, _}
 
     assert_receive {:disconnected, :shutdown}

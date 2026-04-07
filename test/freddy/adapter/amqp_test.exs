@@ -30,11 +30,11 @@ defmodule Freddy.Adapter.AMQPTest do
           internal: internal?
         ]
 
-        assert :ok = declare_exchange(freddy, name, type, options)
+        exchange_name = "#{name}.#{System.unique_integer([:positive])}"
+
+        assert :ok = declare_exchange(freddy, exchange_name, type, options)
         # check that exactly same exchange can be declared again with using different library
-        assert :ok = AMQP.Exchange.declare(amqp, name, type, options)
-        # remove artifact
-        assert :ok = AMQP.Exchange.delete(amqp, name)
+        assert :ok = AMQP.Exchange.declare(amqp, exchange_name, type, options)
       end
     end
   end
