@@ -17,10 +17,10 @@ defmodule Freddy.Core.ActorTest do
     end
 
     def handle_call(
-      {:open_channel, _timeout_at},
-      _from,
-      %{connection: connection, delay: delay}
-    ) do
+          {:open_channel, _timeout_at},
+          _from,
+          %{connection: connection, delay: delay}
+        ) do
       Process.sleep(delay)
       {:reply, Freddy.Connection.open_channel(connection), %{connection: connection, delay: 0}}
     end

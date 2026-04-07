@@ -33,26 +33,26 @@ defmodule Freddy.Integration.PublisherTest do
 
     @impl true
     def before_publication(
-      %{action: "keep"} = payload,
-      routing_key,
-      opts,
-      _from,
-      _timeout,
-      pid
-    ) do
+          %{action: "keep"} = payload,
+          routing_key,
+          opts,
+          _from,
+          _timeout,
+          pid
+        ) do
       send(pid, {:before_publication, payload, routing_key, opts})
 
       {:ok, pid}
     end
 
     def before_publication(
-      %{action: "change"} = payload,
-      routing_key,
-      opts,
-      _from,
-      _timeout,
-      pid
-    ) do
+          %{action: "change"} = payload,
+          routing_key,
+          opts,
+          _from,
+          _timeout,
+          pid
+        ) do
       new_payload = %{action: "change", state: "changed"}
       new_routing_key = routing_key <> ".changed"
       new_opts = opts ++ [changed: "added"]

@@ -16,7 +16,7 @@ defmodule Freddy.Mixfile do
       package: package(),
       description: "JSON RPC Client/Server, JSON Publisher-Subscriber over AMQP",
       dialyzer: [
-        flags: [:error_handling, :underspecs],
+        flags: [:error_handling, :underspecs]
       ],
       docs: [
         extras: ["README.md"],
@@ -30,7 +30,7 @@ defmodule Freddy.Mixfile do
   # Type "mix help compile.app" for more information
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger]
     ]
   end
 
@@ -49,7 +49,7 @@ defmodule Freddy.Mixfile do
       {:amqp, "~> 0.3 or ~> 1.0 or ~> 4.0", only: :test},
       {:stream_data, "~> 1.0", only: :test},
       {:ex_doc, "~> 0.16", only: :dev},
-      {:dialyxir, "~> 1.0", only: :dev, runtime: false},
+      {:dialyxir, "~> 1.0", only: :dev, runtime: false}
     ]
   end
 

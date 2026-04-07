@@ -9,15 +9,19 @@ defmodule Freddy.Tracer do
         "topic"
       end
 
-    :telemetry.span([:freddy, :send], %{
-      attributes: %{
-        "messaging.system": "rabbitmq",
-        "messaging.rabbitmq_routing_key": routing_key,
-        "messaging.destination": exchange.name,
-        "messaging.destination_kind": destination_kind
+    :telemetry.span(
+      [:freddy, :send],
+      %{
+        attributes: %{
+          "messaging.system": "rabbitmq",
+          "messaging.rabbitmq_routing_key": routing_key,
+          "messaging.destination": exchange.name,
+          "messaging.destination_kind": destination_kind
+        },
+        kind: :producer
       },
-      kind: :producer
-    }, block)
+      block
+    )
   end
 
   def with_process_span(meta, exchange, mod, block) do
@@ -25,16 +29,20 @@ defmodule Freddy.Tracer do
 
     destination_kind = if exchange.type == :direct, do: "queue", else: "topic"
 
-    :telemetry.span([:freddy, :process], %{
-      attributes: %{
-        "messaging.system": "rabbitmq",
-        "messaging.rabbitmq_routing_key": routing_key,
-        "messaging.destination": exchange.name,
-        "messaging.destination_kind": destination_kind,
-        "messaging.operation": "process",
-        "messaging.freddy.worker": to_string(mod)
+    :telemetry.span(
+      [:freddy, :process],
+      %{
+        attributes: %{
+          "messaging.system": "rabbitmq",
+          "messaging.rabbitmq_routing_key": routing_key,
+          "messaging.destination": exchange.name,
+          "messaging.destination_kind": destination_kind,
+          "messaging.operation": "process",
+          "messaging.freddy.worker": to_string(mod)
+        },
+        kind: :consumer
       },
-      kind: :consumer
-    }, block)
+      block
+    )
   end
 end
