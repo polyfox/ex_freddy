@@ -31,12 +31,13 @@ defmodule Freddy.Adapter.AMQP.Connection do
   end
 
   def open(uri) when is_binary(uri) do
-    case uri |> to_charlist() |> :amqp_uri.parse() do
-      {:ok, amqp_params} -> do_open(amqp_params)
-      error -> error
-    end
+    case :amqp_uri.parse(to_charlist(uri)) do
+      {:ok, amqp_params} ->
+        do_open(amqp_params)
 
-    do_open(uri)
+      error ->
+        error
+    end
   end
 
   defp do_open(amqp_params) do
