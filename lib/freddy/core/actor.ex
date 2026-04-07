@@ -411,21 +411,35 @@ defmodule Freddy.Core.Actor do
   end
 
   defp do_after_init(mod, connection, given, options) do
-    ref = Process.monitor(connection)
+    case monitor_connection(connection) do
+      {:ok, ref} ->
+        channel_open_timeout =
+          Keyword.get(options, :channel_open_timeout, @default_channel_open_timeout)
 
-    channel_open_timeout =
-      Keyword.get(options, :channel_open_timeout, @default_channel_open_timeout)
+        {:connect, :connect,
+         %{
+           channel_open_timeout: channel_open_timeout,
+           mod: mod,
+           connection: connection,
+           connection_ref: ref,
+           given: given,
+           channel: nil,
+           channel_ref: nil
+         }}
 
-    {:connect, :connect,
-     %{
-       channel_open_timeout: channel_open_timeout,
-       mod: mod,
-       connection: connection,
-       connection_ref: ref,
-       given: given,
-       channel: nil,
-       channel_ref: nil
-     }}
+      {:error, reason} ->
+        {:stop, reason}
+    end
+  end
+
+  defp monitor_connection(connection) do
+    case GenServer.whereis(connection) do
+      pid when is_pid(pid) ->
+        {:ok, Process.monitor(pid)}
+
+      nil ->
+        {:error, {:connection_not_found, connection}}
+    end
   end
 
   defp bind_to_channel(channel, state) do
