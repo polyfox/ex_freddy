@@ -387,24 +387,27 @@ defmodule Freddy.Consumer do
             other
         end
 
-      case result do
-        {:reply, action, new_given} when action in @reply_actions ->
-          apply(__MODULE__, action, [meta])
-          {:noreply, state(state, given: new_given)}
+      result =
+        case result do
+          {:reply, action, new_given} when action in @reply_actions ->
+            apply(__MODULE__, action, [meta])
+            {:noreply, state(state, given: new_given)}
 
-        {:reply, action, opts, new_given} when action in @reply_actions ->
-          apply(__MODULE__, action, [meta, opts])
-          {:noreply, state(state, given: new_given)}
+          {:reply, action, opts, new_given} when action in @reply_actions ->
+            apply(__MODULE__, action, [meta, opts])
+            {:noreply, state(state, given: new_given)}
 
-        {:noreply, new_given} ->
-          {:noreply, state(state, given: new_given)}
+          {:noreply, new_given} ->
+            {:noreply, state(state, given: new_given)}
 
-        {:noreply, new_given, timeout} ->
-          {:noreply, state(state, given: new_given), timeout}
+          {:noreply, new_given, timeout} ->
+            {:noreply, state(state, given: new_given), timeout}
 
-        {:stop, reason, new_given} ->
-          {:stop, reason, state(state, given: new_given)}
-      end
+          {:stop, reason, new_given} ->
+            {:stop, reason, state(state, given: new_given)}
+        end
+
+      {result, %{}}
     end)
   end
 
