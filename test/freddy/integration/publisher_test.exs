@@ -8,8 +8,8 @@ defmodule Freddy.Integration.PublisherTest do
       exchange: [name: "freddy-test-fanout-exchange", type: :fanout, opts: [auto_delete: true]]
     ]
 
-    def start_link(conn, pid) do
-      Freddy.Publisher.start_link(__MODULE__, conn, @config, pid)
+    def start_link(conn, pid, opts \\ []) do
+      Freddy.Publisher.start_link(__MODULE__, conn, @config, pid, opts)
     end
 
     @impl true
@@ -112,90 +112,132 @@ defmodule Freddy.Integration.PublisherTest do
   end
 
   setup context do
-    {:ok, pid} = TestPublisher.start_link(context[:connection], self())
+    name =
+      if context[:use_registry] do
+        {:ok, _registry} = Registry.start_link(keys: :unique, name: __MODULE__.Registry)
 
-    {:ok, Map.put(context, :publisher, pid)}
+        {:via, Registry, {__MODULE__.Registry, "test_publisher"}}
+      else
+        nil
+      end
+
+    {:ok, pid} = TestPublisher.start_link(context[:connection], self(), name: name)
+
+    {:ok, Map.put(context, :publisher, name || pid)}
   end
 
-  test "init/1 is called on initialization" do
-    assert_receive :init
+  describe "init/1" do
+    test "init/1 is called on initialization" do
+      assert_receive :init
+    end
   end
 
-  test "handle_connected/2 is called when RabbitMQ channel is opened" do
-    assert_receive :init
-    assert_receive {:connected, %{exchange: _}}
+  describe "handle_connected/2" do
+    test "handle_connected/2 is called when RabbitMQ channel is opened" do
+      assert_receive :init
+      assert_receive {:connected, %{exchange: _}}
+    end
   end
 
-  test "handle_disconnected/2 is called when RabbitMQ connection is disrupted", %{
-    connection: connection
-  } do
-    assert_receive :init
-    assert_receive {:connected, %{exchange: _}}
+  describe "handle_disconnected/2" do
+    test "handle_disconnected/2 is called when RabbitMQ connection is disrupted", %{
+      connection: connection
+    } do
+      assert_receive :init
+      assert_receive {:connected, %{exchange: _}}
 
-    assert {:ok, conn} = Freddy.Connection.get_connection(connection)
+      assert {:ok, conn} = Freddy.Connection.get_connection(connection)
 
-    ref = Process.monitor(conn)
-    Process.exit(conn, {:shutdown, {:server_initiated_close, 320, ~c'Good bye'}})
-    assert_receive {:DOWN, ^ref, :process, _, _}
+      ref = Process.monitor(conn)
+      Process.exit(conn, {:shutdown, {:server_initiated_close, 320, ~c'Good bye'}})
+      assert_receive {:DOWN, ^ref, :process, _, _}
 
-    assert_receive {:disconnected, :shutdown}
-    refute_receive :init
-    assert_receive {:connected, _}
+      assert_receive {:disconnected, :shutdown}
+      refute_receive :init
+      assert_receive {:connected, _}
+    end
   end
 
-  test "before_publication/4 keeps message unchanged when returns {:ok, state}", %{
-    connection: connection,
-    publisher: publisher
-  } do
-    {:ok, _consumer} = TestConsumer.start_link(connection, self())
-    assert_receive :consumer_ready
+  describe "before_publication/4" do
+    test "before_publication/4 keeps message unchanged when returns {:ok, state}", %{
+      connection: connection,
+      publisher: publisher
+    } do
+      {:ok, _consumer} = TestConsumer.start_link(connection, self())
+      assert_receive :consumer_ready
 
-    payload = %{action: "keep"}
-    expected_payload = %{"action" => "keep"}
-    routing_key = "routing_key"
+      payload = %{action: "keep"}
+      expected_payload = %{"action" => "keep"}
+      routing_key = "routing_key"
 
-    Freddy.Publisher.publish(publisher, payload, routing_key, mandatory: true)
+      Freddy.Publisher.publish(publisher, payload, routing_key, mandatory: true)
 
-    assert_receive {:before_publication, ^payload, ^routing_key, [mandatory: true]}
-    assert_receive {:message_received, ^expected_payload}
+      assert_receive {:before_publication, ^payload, ^routing_key, [mandatory: true]}
+      assert_receive {:message_received, ^expected_payload}
+    end
+
+    test "before_publication/4 changes payload, routing_key and opts " <>
+           "when returns {:ok, payload, routing_key, opts}",
+         %{connection: connection, publisher: publisher} do
+      {:ok, _consumer} = TestConsumer.start_link(connection, self())
+      assert_receive :consumer_ready
+
+      payload = %{action: "change"}
+      expected_payload = %{"action" => "change", "state" => "changed"}
+      routing_key = "routing_key"
+      opts = [mandatory: true]
+
+      Freddy.Publisher.publish(publisher, payload, routing_key, opts)
+
+      assert_receive {:before_publication, ^payload, ^routing_key, [mandatory: true]}
+      assert_receive {:message_received, ^expected_payload}
+    end
+
+    @tag use_registry: true
+    test "publish works when publisher is registered via a registry",
+         %{connection: connection, publisher: publisher} do
+      {:ok, _consumer} = TestConsumer.start_link(connection, self())
+      assert_receive :consumer_ready
+
+      payload = %{action: "change"}
+      expected_payload = %{"action" => "change", "state" => "changed"}
+      routing_key = "routing_key"
+      opts = [mandatory: true]
+
+      Freddy.Publisher.publish(publisher, payload, routing_key, opts)
+
+      assert_receive {:before_publication, ^payload, ^routing_key, [mandatory: true]}
+      assert_receive {:message_received, ^expected_payload}
+    end
   end
 
-  test "before_publication/4 changes payload, routing_key and opts " <>
-         "when returns {:ok, payload, routing_key, opts}",
-       %{connection: connection, publisher: publisher} do
-    {:ok, _consumer} = TestConsumer.start_link(connection, self())
-    assert_receive :consumer_ready
-
-    payload = %{action: "change"}
-    expected_payload = %{"action" => "change", "state" => "changed"}
-    routing_key = "routing_key"
-    opts = [mandatory: true]
-
-    Freddy.Publisher.publish(publisher, payload, routing_key, opts)
-
-    assert_receive {:before_publication, ^payload, ^routing_key, [mandatory: true]}
-    assert_receive {:message_received, ^expected_payload}
+  describe "handle_call/3" do
+    test "handle_call/3 is called on Freddy.Publisher.call", %{publisher: publisher} do
+      assert :response = Freddy.Publisher.call(publisher, :call)
+    end
   end
 
-  test "handle_call/3 is called on Freddy.Publisher.call", %{publisher: publisher} do
-    assert :response = Freddy.Publisher.call(publisher, :call)
+  describe "handle_cast/2" do
+    test "handle_cast/2 is called on Freddy.Publisher.cast", %{publisher: publisher} do
+      assert :ok = Freddy.Publisher.cast(publisher, :cast)
+      _ = :sys.get_state(publisher)
+      assert_receive :cast
+    end
   end
 
-  test "handle_cast/2 is called on Freddy.Publisher.cast", %{publisher: publisher} do
-    assert :ok = Freddy.Publisher.cast(publisher, :cast)
-    _ = :sys.get_state(publisher)
-    assert_receive :cast
+  describe "handle_info/2" do
+    test "handle_info/2 is called on other messages", %{publisher: publisher} do
+      send(publisher, :info)
+      _ = :sys.get_state(publisher)
+      assert_receive :info
+    end
   end
 
-  test "handle_info/2 is called on other messages", %{publisher: publisher} do
-    send(publisher, :info)
-    _ = :sys.get_state(publisher)
-    assert_receive :info
-  end
-
-  test "terminate/2 is called when the process stops", %{publisher: publisher} do
-    Freddy.Publisher.stop(publisher, :normal)
-    assert_receive {:terminate, :normal}
+  describe "terminate/2" do
+    test "terminate/2 is called when the process stops", %{publisher: publisher} do
+      Freddy.Publisher.stop(publisher, :normal)
+      assert_receive {:terminate, :normal}
+    end
   end
 
   @tag server: true
