@@ -43,7 +43,7 @@ defmodule Freddy.Mixfile do
       {:amqp_client, "~> 3.6 or ~> 4.1"},
       {:connection, "~> 1.0"},
       {:jason, "~> 1.0"},
-      {:decimal, "~> 1.0 or ~> 2.0"},
+      {:decimal, "~> 1.0 or ~> 2.0 or ~> 3.0"},
       {:backoff, "~> 1.1"},
       {:telemetry, "~> 1.0"},
       {:amqp, "~> 0.3 or ~> 1.0 or ~> 4.0", only: :test},
